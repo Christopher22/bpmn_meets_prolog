@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["crates/syntax", "crates/engine", "crates/worker", "crates/web"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Christopher Gundler <christopher@gundler.de>"]
+publish = false
+
+[workspace.dependencies]
+bpmn-syntax = { path = "crates/syntax" }
+# Members opt into the Prolog machine with `features = ["machine"]`.
+bpmn-engine = { path = "crates/engine", default-features = false }
+
+scryer-prolog = { version = "0.10", default-features = false }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+console_error_panic_hook = "0.1"
+gloo-timers = "0.3"
+js-sys = "0.3"
+leptos = { version = "0.8", features = ["csr"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+
+# Scryer Prolog 0.10 trips a debug-only UB precondition check while building a
+# machine (`Heap::clear`), and is unusably slow unoptimised anyway.
+[profile.dev.package.scryer-prolog]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
+# No LTO for release builds: Scryer Prolog 0.10 has undefined behaviour that
+# cross-crate optimisation turns into out-of-bounds accesses on wasm32 (its own
+# `wasm-release` profile disables LTO as well).
+[profile.release]
+lto = false

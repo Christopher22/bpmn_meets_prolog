@@ -1,0 +1,21 @@
+{
+	"name": "Dev Container",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "features": {
+        "ghcr.io/devcontainers/features/rust:1": {
+            "targets": "wasm32-unknown-unknown"
+        }
+    },
+    // clang cross-compiles ring (a Scryer Prolog dependency) to wasm32.
+    "postCreateCommand": "sudo apt-get update && sudo apt-get install -y clang && cargo install trunk --locked",
+    "forwardPorts": [8080],
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "[rust]": {
+                    "editor.formatOnSave": true
+                }
+            }   
+        }
+    }
+}

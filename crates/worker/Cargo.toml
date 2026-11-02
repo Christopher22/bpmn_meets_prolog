@@ -1,0 +1,24 @@
+[package]
+name = "bpmn-worker"
+description = "Web Worker that renders bpmn.pl programs with Scryer Prolog for the browser front end."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "worker"
+path = "src/main.rs"
+
+[dependencies]
+bpmn-engine = { workspace = true, features = ["machine"] }
+bpmn-syntax.workspace = true
+
+console_error_panic_hook.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys = { workspace = true, features = ["DedicatedWorkerGlobalScope", "MessageEvent"] }
+
+[lints]
+workspace = true

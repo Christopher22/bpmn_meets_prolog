@@ -1,0 +1,11 @@
+[package]
+name = "bpmn-syntax"
+description = "A fast, allocation-light lexical pre-check for Prolog source text."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

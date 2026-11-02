@@ -1,0 +1,43 @@
+[package]
+name = "bpmn-web"
+description = "Browser front end: edit bpmn.pl models and see them rendered with bpmn-js."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Types and protocol only: Prolog runs in the worker, not on the page.
+bpmn-engine.workspace = true
+bpmn-syntax.workspace = true
+
+console_error_panic_hook.workspace = true
+gloo-timers.workspace = true
+js-sys.workspace = true
+leptos.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "CssStyleDeclaration",
+    "DomRect",
+    "Element",
+    "ErrorEvent",
+    "HtmlDocument",
+    "HtmlPreElement",
+    "HtmlSpanElement",
+    "HtmlTextAreaElement",
+    "InputEvent",
+    "KeyboardEvent",
+    "MessageEvent",
+    "Performance",
+    "ScrollIntoViewOptions",
+    "ScrollLogicalPosition",
+    "Window",
+    "Worker",
+    "WorkerOptions",
+    "WorkerType",
+] }
+
+[lints]
+workspace = true

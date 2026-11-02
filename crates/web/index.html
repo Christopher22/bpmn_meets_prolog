@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BPMN in Prolog</title>
+
+    <!-- bpmn-js 18.31.0 navigated viewer (pan & zoom), vendored so the built
+         site needs no internet; see github.com/bpmn-io/bpmn-js-examples -->
+    <link data-trunk rel="css" href="vendor/bpmn-js/diagram-js.css" />
+    <link data-trunk rel="css" href="vendor/bpmn-js/bpmn-js.css" />
+    <script
+      data-trunk
+      data-no-minify
+      src="vendor/bpmn-js/bpmn-navigated-viewer.production.min.js"
+    ></script>
+
+    <link data-trunk rel="css" href="style.css" />
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="bpmn-web" data-type="main" />
+    <!-- The Prolog engine runs in a module Web Worker (crates/worker). -->
+    <link
+      data-trunk
+      rel="rust"
+      href="../worker/Cargo.toml"
+      data-bin="worker"
+      data-type="worker"
+      data-bindgen-target="web"
+      data-loader-shim
+    />
+  </head>
+  <body></body>
+</html>

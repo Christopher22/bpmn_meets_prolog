@@ -1,0 +1,381 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --border: #d9dde3;
+  --text: #1f2328;
+  --muted: #656d76;
+  --ok: #1a7f37;
+  --warn: #9a6700;
+  --error: #cf222e;
+  --accent: #0969da;
+  --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --gutter: 16px;
+  --radius: 8px;
+
+  /* syntax highlighting */
+  --t-comment: #6e7781;
+  --t-dsl: #0550ae;
+  --t-value: #8250df;
+  --t-functor: #953800;
+  --t-var: #bc4c00;
+  --t-str: #0a3069;
+  --t-num: #0550ae;
+  --t-sym: #cf222e;
+  --t-punct: #57606a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 var(--sans);
+}
+
+/* --- joint title ------------------------------------------------------ */
+
+.title {
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.title h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+}
+
+.title p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* --- the two halves: editor left, diagram right ---------------------- */
+
+.split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gutter);
+  padding: var(--gutter);
+}
+
+.pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(31 35 40 / 6%);
+}
+
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- diagram ---------------------------------------------------------- */
+
+.canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* Bottom-left, clear of the bpmn.io watermark (bottom-right), which the
+   bpmn-js license requires to stay fully visible. */
+.overlay {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: calc(100% - 140px);
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.overlay.error {
+  color: var(--error);
+}
+
+/* Elements bpmn_check/2 complains about. */
+.djs-element.bpmn-problem:not(.djs-connection) .djs-visual > :nth-child(1) {
+  stroke: var(--error) !important;
+  stroke-width: 3px !important;
+}
+
+.djs-connection.bpmn-problem .djs-visual > path {
+  stroke: var(--error) !important;
+}
+
+/* --- editor: a transparent text area over highlighted text ------------ */
+
+.editor {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Text area, overlay and measuring span must lay out text identically. */
+.editor-code {
+  margin: 0;
+  padding: 12px 16px;
+  border: 0;
+  font: 13px/1.5 var(--mono);
+  letter-spacing: normal;
+  tab-size: 4;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.editor-overlay,
+.editor-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-overlay {
+  overflow: hidden;
+  /* Room to scroll as far as the text area, whose scrollbars take space. */
+  padding-right: 40px;
+  padding-bottom: 40px;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.editor-input {
+  overflow: auto;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+}
+
+.editor-input::selection {
+  background: rgb(9 105 218 / 22%);
+  color: transparent;
+}
+
+.editor-input:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.editor-measure {
+  position: absolute;
+  padding: 0;
+  visibility: hidden;
+}
+
+/* Colour only: other weights or styles could change glyph widths and
+   misalign the overlay with the caret. */
+.t-comment {
+  color: var(--t-comment);
+}
+
+.t-dsl {
+  color: var(--t-dsl);
+}
+
+.t-value {
+  color: var(--t-value);
+}
+
+.t-functor {
+  color: var(--t-functor);
+}
+
+.t-var {
+  color: var(--t-var);
+}
+
+.t-str,
+.t-quoted {
+  color: var(--t-str);
+}
+
+.t-num {
+  color: var(--t-num);
+}
+
+.t-sym {
+  color: var(--t-sym);
+}
+
+.t-punct {
+  color: var(--t-punct);
+}
+
+.t-invalid,
+.t-error {
+  text-decoration: wavy underline var(--error);
+  text-decoration-skip-ink: none;
+}
+
+.t-invalid {
+  color: var(--error);
+}
+
+/* A zero-width caret marking an error between tokens (e.g. a missing '.'). */
+.t-mark {
+  position: relative;
+}
+
+.t-mark::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -1.1em;
+  width: 2px;
+  height: 1.3em;
+  background: var(--error);
+}
+
+/* --- completion list -------------------------------------------------- */
+
+.completions {
+  position: absolute;
+  z-index: 10;
+  min-width: 220px;
+  max-width: 340px;
+  max-height: 220px;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgb(31 35 40 / 15%);
+  font: 12px/1.4 var(--mono);
+}
+
+.completions li {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.completions li.selected {
+  background: rgb(9 105 218 / 12%);
+}
+
+.completion-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.completion-detail {
+  color: var(--muted);
+  font-family: var(--sans);
+}
+
+/* --- status panel ----------------------------------------------------- */
+
+.status {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow: auto;
+  padding: 8px 16px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 0.85rem;
+}
+
+.line {
+  display: block;
+  margin: 4px 0;
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.error {
+  color: var(--error);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.jump {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.findings .jump {
+  color: inherit;
+}
+
+.jump:hover,
+.jump:focus-visible {
+  text-decoration: underline;
+}
+
+.findings {
+  margin: 2px 0 6px;
+  padding-left: 20px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
+.output summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.output pre {
+  margin: 4px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font: 12px/1.4 var(--mono);
+}
+
+/* --- narrow screens: stack the halves, editor first ------------------- */
+
+@media (max-width: 800px) {
+  :root {
+    --gutter: 12px;
+  }
+
+  .split {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 1fr) minmax(320px, 1fr);
+  }
+}

@@ -1,0 +1,31 @@
+[package]
+name = "bpmn-engine"
+description = "Runs BPMN models written in the bpmn.pl DSL on an embedded Scryer Prolog machine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+default = ["machine"]
+## The Scryer Prolog machine (`Engine`). Without it, only the result types and
+## the worker protocol are available, e.g. for a browser front end.
+machine = ["dep:bpmn-syntax", "dep:scryer-prolog"]
+
+[dependencies]
+bpmn-syntax = { workspace = true, optional = true }
+scryer-prolog = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+bpmn-syntax.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "render"
+required-features = ["machine"]
