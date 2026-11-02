@@ -207,3 +207,48 @@ chain([X, Y | Zs], X => Rest) :- chain([Y | Zs], Rest).
     assert!(xml.len() > 100_000, "{}", xml.len());
     assert!(xml.trim_end().ends_with("</bpmn:definitions>"));
 }
+
+#[test]
+fn routes_long_flows_around_shapes() {
+    // g => b skips the column of a, so the flow must not run through a.
+    let mut engine = Engine::new();
+    let rendering = render(
+        &mut engine,
+        ":- use_module(bpmn).\nmodel(bpmn(m, [process(p, \"P\", [start(s), xor(g), \
+         task(a, \"A\"), task(b, \"B\"), end(e), s => g => [a, b], a => b => e])])).",
+    );
+    let Outcome::Rendered { xml, problems } = rendering.outcome else {
+        panic!("unexpected outcome: {:?}", rendering.outcome);
+    };
+    assert_eq!(problems, []);
+
+    let shape = element(&xml, "a_di");
+    let [x, y, w, h] = ["x", "y", "width", "height"].map(|name| number(shape, name));
+    let points: Vec<_> = element(&xml, "flow_g_b_di")
+        .split("<di:waypoint")
+        .skip(1)
+        .map(|p| (number(p, "x"), number(p, "y")))
+        .collect();
+    assert!(points.len() > 2, "{points:?}");
+    for pair in points.windows(2) {
+        let [(x1, y1), (x2, y2)] = [pair[0], pair[1]];
+        let crosses = x1.min(x2) < x + w && x1.max(x2) > x && y1.min(y2) < y + h && y1.max(y2) > y;
+        assert!(!crosses, "{points:?} crosses {:?}", (x, y, w, h));
+    }
+}
+
+/// The text of the diagram element with the given id, up to its end tag.
+fn element<'a>(xml: &'a str, id: &str) -> &'a str {
+    let start = xml.find(&format!("id=\"{id}\"")).expect("element exists");
+    let rest = &xml[start..];
+    &rest[..rest.find("</bpmndi:").expect("element is closed")]
+}
+
+/// The first numeric attribute `name` in `text`.
+fn number(text: &str, name: &str) -> i64 {
+    let start = text.find(&format!(" {name}=\"")).expect("attribute exists") + name.len() + 3;
+    let len = text[start..].find('"').expect("attribute is closed");
+    text[start..start + len]
+        .parse()
+        .expect("attribute is a number")
+}

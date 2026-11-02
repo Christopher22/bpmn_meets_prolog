@@ -62,6 +62,7 @@
 :- use_module(library(pio)).
 :- use_module(library(error)).
 :- use_module(library(charsio)).
+:- use_module(library(between)).
 
 :- op(700, xfy, =>).
 :- op(700, xfx, ~>).
@@ -419,8 +420,18 @@ flow_xml(flow(F, S, T, L, _),
     ).
 
 /* =====================================================================
-   4. Diagram interchange: a small layered auto-layout
-      columns = longest path rank, rows = first free row near predecessor
+   4. Diagram interchange: a layered (Sugiyama-style) auto-layout
+      1. cycles     depth-first search; back edges are laid out reversed
+      2. columns    longest-path rank, so every forward flow points right
+      3. long flows a dummy in every column a flow skips reserves a slot,
+                    so the flow never runs through a shape
+      4. order      barycenter sweeps within each lane, fewest crossings kept
+      5. rows       Brandes-Köpf: items align with their median predecessor
+                    into straight blocks, packed to the top
+      6. routing    orthogonal: horizontal runs in reserved slots, vertical
+                    runs in the gaps between columns (or a free column);
+                    back edges use the free channels between rows, and
+                    runs that would overlap move onto parallel tracks
    ===================================================================== */
 
 col_w(150).   row_h(120).   lane_hdr(30).   pool_hdr(30).   pool_gap(40).
@@ -433,7 +444,8 @@ diagrams_xml(Db, Def, PlaneOf, [Main | Subs]) :-
     main_layout(Db, Items),
     di_xml(Db, Def, PlaneOf, Items, Main),
     findall(D, ( member(node(S, subprocess, _, _), Db),
-                 content(Db, S, 0, 0, [], Sh, Ed, _, _, _),
+                 content(Db, S, 0, 0, [], Sh, Ed0, Ls, _, _, _),
+                 separate(Ls, Ed0, Ed),
                  append(Sh, Ed, Is),
                  di_xml(Db, S, S, Is, D) ),
             Subs).
@@ -468,56 +480,77 @@ main_layout(Db, Items) :-
     foldl(layout_pool(Db), Pools, Laid, 0-0, _-MaxW0),
     MaxW is max(MaxW0, 600),
     findall(I, ( member(L, Laid), pool_items(L, MaxW, PH, I0), member(I, I0) ), PoolItems),
-    findall(P-s(0, Y, MaxW, H), member(laid(P, Y, H, _, _, _), Laid), PoolBoxes),
-    findall(S, ( member(laid(_, _, _, _, Ss, _), Laid), member(S, Ss) ), NodeShapes),
+    findall(P-s(0, Y, MaxW, H), member(laid(P, Y, H, _, _, _, _), Laid), PoolBoxes),
+    findall(S, ( member(laid(_, _, _, _, Ss, _, _), Laid), member(S, Ss) ), NodeShapes),
     findall(E, ( member(mflow(M, S, T, _), Db),
                  mflow_edge(Db, PoolBoxes, NodeShapes, Gap, M, S, T, E) ), MEdges),
-    append(PoolItems, MEdges, Items).
+    findall(MY, ( member(_-s(_, Y, _, H), PoolBoxes),
+                  ( MY is Y - Gap // 2 ; MY is Y + H + Gap // 2 ) ), MYs),
+    findall(E, ( member(laid(_, _, _, _, _, Es, _), Laid), member(E, Es) ), SEdges),
+    findall(X, ( member(laid(_, _, _, _, _, _, Xs-_), Laid), member(X, Xs) ), Xs),
+    findall(Y, ( member(laid(_, _, _, _, _, _, _-Ys), Laid), member(Y, Ys) ), Ys0),
+    append(Ys0, MYs, Ys),
+    append(SEdges, MEdges, Edges0),
+    separate(Xs-Ys, Edges0, Edges),
+    append(PoolItems, Edges, Items).
 main_layout(Db, Items) :-
     once(member(process(P, _), Db)),
-    content(Db, P, 0, 0, [], Shapes, Edges, _, _, _),
+    content(Db, P, 0, 0, [], Shapes, Edges0, Lines, _, _, _),
+    separate(Lines, Edges0, Edges),
     append(Shapes, Edges, Items).
 
-layout_pool(_, P-_-none, laid(P, Y, 80, [], [], []), Y-W, Y1-W) :- !,
+layout_pool(_, P-_-none, laid(P, Y, 80, [], [], [], []-[]), Y-W, Y1-W) :- !,
     pool_gap(G), Y1 is Y + 80 + G.
-layout_pool(Db, P-_-Proc, laid(P, Y, H, Bands, Shapes, Edges), Y-W0, Y1-W) :-
+layout_pool(Db, P-_-Proc, laid(P, Y, H, Bands, Shapes, Edges, Lines), Y-W0, Y1-W) :-
     findall(lane(L, N, Proc, Ms), member(lane(L, N, Proc, Ms), Db), Lanes),
     pool_hdr(PH), lane_hdr(LH),
     ( Lanes = [] -> X0 = PH ; X0 is PH + LH ),
-    content(Db, Proc, X0, Y, Lanes, Shapes, Edges, Bands, CW, H),
+    content(Db, Proc, X0, Y, Lanes, Shapes, Edges, Lines, Bands, CW, H),
     W is max(W0, X0 + CW),
     pool_gap(G), Y1 is Y + H + G.
 
-pool_items(laid(P, Y, H, Bands, Shapes, Edges), W, PH, [shape(P, 0, Y, W, H) | Is]) :-
+pool_items(laid(P, Y, H, Bands, Shapes, _, _), W, PH, [shape(P, 0, Y, W, H) | Is]) :-
     LW is W - PH,
     findall(shape(L, PH, LY, LW, LHt), ( member(band(L, LY, LHt), Bands), L \== none ), Ls),
-    append([Ls, Shapes, Edges], Is).
+    append(Ls, Shapes, Is).
 
-%  content(+Db, +Container, +X0, +Y0, +Lanes, -Shapes, -Edges, -Bands, -Width, -Height)
-content(Db, C, X0, Y0, Lanes, Shapes, Edges, Bands, CW, H) :-
+%  content(+Db, +Container, +X0, +Y0, +Lanes,
+%          -Shapes, -Edges, -Lines, -Bands, -Width, -Height)
+%  Lines = GapXs-ChannelYs: where flows of the plane may need separating
+content(Db, C, X0, Y0, Lanes, Shapes, Edges, Gaps-Channels, Bands, CW, H) :-
     findall(Id, ( member(node(Id, T, _, C), Db), T \= boundary(_, _, _) ), Ns),
-    findall(S-T, ( member(flow(_, S0, T, _, C), Db), anchor(Db, S0, S),
-                   S \== T, memberchk(S, Ns), memberchk(T, Ns) ), Es),
-    findall(S-T, ( member(flow(_, S0, T, _, C), Db),
-                   member(node(S0, boundary(_, S, _), _, _), Db) ), BEs),
+    findall(f(F, S0, S, T), ( member(flow(F, S0, T, _, C), Db), anchor(Db, S0, S),
+                              S \== T, memberchk(S, Ns), memberchk(T, Ns) ), Fs),
+    findall(S-T, member(f(_, _, S, T), Fs), Es),
     back_edges(Ns, Es, Back),
     findall(E, ( member(E, Es), \+ memberchk(E, Back) ), Fwd),
-    ranks(Ns, Fwd, RankA),
-    lane_assoc(Ns, Lanes, LaneA),
-    findall((R-I)-N, ( nth0(I, Ns, N), get_assoc(N, RankA, R) ), Keyed),
-    keysort(Keyed, Sorted), pairs_values(Sorted, Ordered),
-    empty_assoc(RA0),
-    assign_rows(Ordered, Fwd, BEs, LaneA, RankA, [], RA0, RowA),
-    bands(Lanes, Ns, LaneA, RowA, Y0, Bands, H),
+    ranks(Ns, Fwd, RankA0),
+    lane_assoc(Ns, Lanes, LaneA0),
+    long_flows(Fs, Back, RankA0, LaneA0, Ds, Links, RankA, LaneA),
+    append(Ns, Ds, Items),
+    (   Ns = [] -> MaxR = 0
+    ;   findall(R, ( member(N, Ns), get_assoc(N, RankA, R) ), Rs), list_max(Rs, MaxR)
+    ),
+    findall(Layer, ( between(0, MaxR, R),
+                     findall((L-K)-I, ( nth0(K, Items, I), get_assoc(I, RankA, R),
+                                        get_assoc(I, LaneA, L) ), Ks),
+                     keysort(Ks, Ss), pairs_values(Ss, Layer) ),
+            Layers0),
+    order_layers(Layers0, Links, LaneA, Layers),
+    rows(Layers, Links, LaneA, RowA),
+    bands(Lanes, Items, LaneA, RowA, Y0, Bands, H),
     findall(S, ( member(N, Ns), node_shape(Db, N, X0, RankA, RowA, LaneA, Lanes, Bands, S) ),
             Shapes0),
     boundary_shapes(Db, C, Shapes0, BShapes),
     append(Shapes0, BShapes, Shapes),
-    findall(edge(F, Pts), ( member(flow(F, S, T, _, C), Db),
-                            route_flow(Db, Shapes, S, T, Pts) ), Edges),
-    (   Ns = [] -> MaxR = 0
-    ;   findall(R, ( member(N, Ns), get_assoc(N, RankA, R) ), Rs), list_max(Rs, MaxR)
-    ),
+    G = g(Db, X0, RankA, RowA, LaneA, Bands, Back, Shapes),
+    findall(edge(F, Pts), ( member(flow(F, S, T, _, C), Db), route_flow(G, F, S, T, Pts) ),
+            Edges),
+    findall(X, ( between(0, MaxR, R), gap_x(G, R, X) ), Gaps),
+    row_h(RH),
+    findall(Y, ( member(band(_, BY, BH), Bands), Rows is (BH - 20) // RH, R1 is Rows - 1,
+                 between(0, R1, R), member(DY, [10, 130]), Y is BY + DY + R * RH ),
+            Channels),
     col_w(CWd), CW is (MaxR + 1) * CWd + 40.
 
 anchor(Db, X, A) :-
@@ -572,20 +605,136 @@ lane_assoc(Ns, Lanes, A) :-
 lane_index(Lanes, N, L) :-
     (   nth0(L, Lanes, lane(_, _, _, Ms)), memberchk(N, Ms) -> true ; L = 0 ).
 
-assign_rows([], _, _, _, _, _, RA, RA).
-assign_rows([N|Ns], Fwd, BEs, LaneA, RankA, Occ, RA0, RA) :-
-    get_assoc(N, LaneA, L), get_assoc(N, RankA, R),
-    findall(PR, ( member(P-N, Fwd), get_assoc(P, LaneA, L), get_assoc(P, RA0, PR0),
-                  ( memberchk(P-N, BEs) -> PR is PR0 + 1 ; PR = PR0 ) ), PRs),
-    ( PRs = [] -> Pref = 0 ; list_min(PRs, Pref) ),
-    free_row(Pref, L, R, Occ, Row),
-    put_assoc(N, RA0, Row, RA1),
-    assign_rows(Ns, Fwd, BEs, LaneA, RankA, [o(L, R, Row)|Occ], RA1, RA).
+%  long_flows(+Flows, +Back, +Ranks0, +Lanes0, -Dummies, -Links, -Ranks, -Lanes)
+%  Splits every flow into links l(U, V, Bias) between adjacent columns, with a
+%  dummy d(Flow, Rank) in the lane of its source for every column it skips.
+%  Back edges get neither: they run through the free channels between rows.
+%  Bias 1 marks a flow leaving a boundary event: its target prefers the row
+%  below the host.
+long_flows([], _, R, L, [], [], R, L).
+long_flows([f(F, S0, S, T)|Fs], Back, R0, L0, Ds, Links, R, L) :-
+    (   memberchk(S-T, Back)
+    ->  Ds1 = [], Links1 = [], R1 = R0, L1 = L0
+    ;   ( S0 == S -> B = 0 ; B = 1 ),
+        get_assoc(S, R0, RS), get_assoc(T, R0, RT), get_assoc(S, L0, Lane),
+        K0 is RS + 1, K1 is RT - 1,
+        findall(d(F, K), between(K0, K1, K), Ds1),
+        foldl(dummy(Lane), Ds1, R0-L0, R1-L1),
+        append([S|Ds1], [T], Chain),
+        chain_links(Chain, B, Links1)
+    ),
+    long_flows(Fs, Back, R1, L1, Ds2, Links2, R, L),
+    append(Ds1, Ds2, Ds), append(Links1, Links2, Links).
 
-free_row(P, L, R, Occ, Row) :-
-    (   memberchk(o(L, R, P), Occ) -> P1 is P + 1, free_row(P1, L, R, Occ, Row)
-    ;   Row = P
+dummy(Lane, d(F, K), R0-L0, R-L) :-
+    put_assoc(d(F, K), R0, K, R),
+    put_assoc(d(F, K), L0, Lane, L).
+
+chain_links([_], _, []).
+chain_links([U, V|Vs], B, [l(U, V, B)|Ls]) :- chain_links([V|Vs], 0, Ls).
+
+%  order_layers(+Layers0, +Links, +LaneA, -Layers): barycenter sweeps (down,
+%  then up) while they reduce the crossings; ties keep the declaration order
+order_layers(Ls0, Links, LaneA, Ls) :-
+    crossings(Ls0, Links, K0),
+    improve(4, Links, LaneA, Ls0, K0, Ls).
+
+improve(N, Links, LaneA, Ls0, K0, Ls) :-
+    (   N > 0, K0 > 0,
+        sweep(down, Links, LaneA, Ls0, Ls1),
+        reverse(Ls1, Rs1), sweep(up, Links, LaneA, Rs1, Rs2), reverse(Rs2, Ls2),
+        crossings(Ls1, Links, K1), crossings(Ls2, Links, K2),
+        ( K2 =< K1 -> Ls3 = Ls2, K3 = K2 ; Ls3 = Ls1, K3 = K1 ),
+        K3 < K0
+    ->  N1 is N - 1, improve(N1, Links, LaneA, Ls3, K3, Ls)
+    ;   Ls = Ls0
     ).
+
+sweep(Dir, Links, LaneA, [L|Ls0], [L|Ls]) :-
+    foldl(reorder(Dir, Links, LaneA), Ls0, Ls, L, _).
+
+reorder(Dir, Links, LaneA, Layer0, Layer, Prev, Layer) :-
+    positions(Prev, PA),
+    findall((Ln-B-K)-V, ( nth0(K, Layer0, V), get_assoc(V, LaneA, Ln),
+                          bary(Dir, Links, PA, K, V, B) ), Ks),
+    keysort(Ks, Ss), pairs_values(Ss, Layer).
+
+positions(Layer, PA) :-
+    findall(I-K, nth0(K, Layer, I), Ps),
+    list_to_assoc(Ps, PA).
+
+%  bary(+Dir, +Links, +Positions, +Pos, +Item, -B): 1000 x mean neighbour position
+bary(Dir, Links, PA, K, V, B) :-
+    findall(P, ( neighbour(Dir, Links, V, U, Bias), get_assoc(U, PA, P0),
+                 P is P0 * 1000 + Bias ), Ps),
+    (   Ps = [] -> B is K * 1000
+    ;   sum_list(Ps, S), length(Ps, N), B is S // N
+    ).
+
+neighbour(down, Links, V, U, Bias) :- member(l(U, V, B), Links), Bias is B * 500.
+neighbour(up, Links, V, W, Bias)   :- member(l(V, W, B), Links), Bias is -B * 500.
+
+crossings([], _, 0).
+crossings([_], _, 0).
+crossings([A, B|Ls], Links, K) :-
+    positions(A, PA), positions(B, PB),
+    findall(P-Q, ( member(l(U, V, _), Links), get_assoc(U, PA, P), get_assoc(V, PB, Q) ),
+            Es),
+    findall(x, ( append(_, [P1-Q1|Rest], Es), member(P2-Q2, Rest),
+                 (P1 - P2) * (Q1 - Q2) < 0 ), Xs),
+    length(Xs, K1),
+    crossings([B|Ls], Links, K2),
+    K is K1 + K2.
+
+%  rows(+Layers, +Links, +LaneA, -RowA): Brandes-Köpf, top-left alignment.
+%  Left to right, each item joins the block of the median of its neighbours in
+%  the column before (same lane, order preserved), so chains run straight; a
+%  link crossing a dummy-to-dummy link is never aligned, so long flows stay
+%  straight first. Blocks are then packed to the top, one row apart.
+rows(Layers, Links, LaneA, RowA) :-
+    findall(V-K, ( member(Layer, Layers), nth0(K, Layer, V) ), Ps),
+    list_to_assoc(Ps, PosA),
+    findall(V-V, member(V-_, Ps), Rs0),
+    list_to_assoc(Rs0, RootA0),
+    foldl(align_layer(Links, LaneA, PosA), Layers, RootA0, RootA),
+    findall(R, member(_-R, Rs0), Items),
+    findall(R, ( member(V, Items), get_assoc(V, RootA, R) ), Roots0),
+    sort(Roots0, Roots),
+    findall(R1-R2, ( member(Layer, Layers), append(_, [V1, V2|_], Layer),
+                     get_assoc(V1, LaneA, L), get_assoc(V2, LaneA, L),
+                     get_assoc(V1, RootA, R1), get_assoc(V2, RootA, R2) ),
+            Below),
+    ranks(Roots, Below, YA),
+    findall(V-Y, ( member(V, Items), get_assoc(V, RootA, R), get_assoc(R, YA, Y) ), Ys),
+    list_to_assoc(Ys, RowA).
+
+align_layer(Links, LaneA, PosA, Layer, RA0, RA) :-
+    conflicts(Links, PosA, Layer, Marked),
+    foldl(align_item(Links, LaneA, PosA, Marked), Layer, RA0-(-1), RA-_).
+
+align_item(Links, LaneA, PosA, Marked, V, RA0-R0, RA-R) :-
+    get_assoc(V, LaneA, L),
+    findall(P-U, ( member(l(U, V, 0), Links), get_assoc(U, LaneA, L),
+                   get_assoc(U, PosA, P) ), Us0),
+    keysort(Us0, Us),
+    length(Us, D), Lo is (D - 1) // 2, Hi is D // 2,
+    (   member(M, [Lo, Hi]), nth0(M, Us, P-U),
+        \+ memberchk(U-V, Marked), R0 < P
+    ->  get_assoc(U, RA0, Root), put_assoc(V, RA0, Root, RA), R = P
+    ;   RA = RA0, R = R0
+    ).
+
+%  conflicts(+Links, +PosA, +Layer, -Marked): links into Layer that cross a
+%  link between two dummies
+conflicts(Links, PosA, Layer, Marked) :-
+    findall(U-V, ( member(V, Layer), member(l(U, V, _), Links) ), In),
+    findall(U-V, ( member(U-V, In), U = d(_, _), V = d(_, _) ), Inner),
+    findall(U-V, ( member(U-V, In), \+ ( U = d(_, _), V = d(_, _) ),
+                   member(U2-V2, Inner),
+                   get_assoc(U, PosA, P1), get_assoc(U2, PosA, P2),
+                   get_assoc(V, PosA, Q1), get_assoc(V2, PosA, Q2),
+                   (P1 - P2) * (Q1 - Q2) < 0 ),
+            Marked).
 
 %  bands(+Lanes, ...): one horizontal band per lane (or one band if no lanes)
 bands(Lanes, Ns, LaneA, RowA, Y0, Bands, H) :-
@@ -620,69 +769,248 @@ boundary_shapes(Db, C, Shapes, BShapes) :-
               X is AX + AW - 38 - K * 40, Y is AY + AH - 18 ),
             BShapes).
 
-route_flow(Db, Shapes, S, T, Pts) :-
-    memberchk(shape(S, SX, SY, SW, SH), Shapes),
+%  route_flow(+G, +Flow, +Source, +Target, -Points)
+%  Tries the candidate routes in order of preference and takes the first that
+%  crosses no shape; the last candidate only uses reserved slots and gaps.
+route_flow(G, F, S0, T, Pts) :-
+    G = g(Db, _, RankA, _, _, _, _, Shapes),
+    memberchk(shape(S0, SX, SY, SW, SH), Shapes),
     memberchk(shape(T, TX, TY, TW, TH), Shapes),
-    shape_kind(Db, S, SK), shape_kind(Db, T, TK),
-    route(SK, s(SX, SY, SW, SH), TK, s(TX, TY, TW, TH), Pts).
-
-shape_kind(Db, Id, K) :-
-    member(node(Id, T, _, _), Db), !,
-    (   T = gateway(_)        -> K = gateway
-    ;   T = boundary(_, _, _) -> K = boundary
-    ;   K = other
-    ).
-
-route(SK, s(SX, SY, SW, SH), TK, s(TX, TY, TW, TH), Pts) :-
-    SCX is SX + SW // 2, SCY is SY + SH // 2,
-    TCX is TX + TW // 2, TCY is TY + TH // 2,
-    SR is SX + SW, SB is SY + SH,
-    (   SK == boundary
-    ->  (   TCY > SB, TX > SCX
-        ->  Pts = [p(SCX, SB), p(SCX, TCY), p(TX, TCY)]
-        ;   Y1 is max(SB, TY + TH) + 20, XL is TX - 20,
-            Pts = [p(SCX, SB), p(SCX, Y1), p(XL, Y1), p(XL, TCY), p(TX, TCY)]
+    anchor(Db, S0, S),
+    get_assoc(S, RankA, RS), get_assoc(T, RankA, RT),
+    SBox = s(SX, SY, SW, SH), TBox = s(TX, TY, TW, TH),
+    (   S == T
+    ->  loop_route(G, S0, S, RS, SBox, TBox, Pts)
+    ;   findall(Ps, candidate(G, F, S0, S, T, RS, RT, SBox, TBox, Ps), Cands),
+        (   member(Pts, Cands), clear(Shapes, [S0, S, T], Pts) -> true
+        ;   append(_, [Pts], Cands)
         )
-    ;   TCX =< SCX                                  % back edge: go round below
-    ->  TB is TY + TH, Y1 is max(SB, TB) + 20,
-        Pts = [p(SCX, SB), p(SCX, Y1), p(TCX, Y1), p(TCX, TB)]
-    ;   SCY =:= TCY
-    ->  Pts = [p(SR, SCY), p(TX, TCY)]
-    ;   SK == gateway                               % split: leave top/bottom
-    ->  ( TCY > SCY -> GY = SB ; GY = SY ),
-        Pts = [p(SCX, GY), p(SCX, TCY), p(TX, TCY)]
-    ;   TK == gateway                               % join: enter top/bottom
-    ->  ( SCY < TCY -> GY = TY ; GY is TY + TH ),
-        Pts = [p(SR, SCY), p(TCX, SCY), p(TCX, GY)]
-    ;   MX is (SR + TX) // 2,
-        Pts = [p(SR, SCY), p(MX, SCY), p(MX, TCY), p(TX, TCY)]
     ).
 
-%  message flows: vertical between pools, through the gap below/above the source pool
+candidate(G, F, S0, S, T, RS, RT, SBox, TBox, Pts) :-
+    G = g(Db, _, _, _, _, _, Back, _),
+    (   memberchk(S-T, Back)
+    ->  gap_x(G, RT, X), Gaps = [X],
+        back_ends(G, F, S0, S, T, SBox, TBox, Start, Levels, End)
+    ;   K0 is RS + 1, K1 is RT - 1,
+        findall(Y, ( between(K0, K1, K), dummy_y(G, d(F, K), Y) ), Ds),
+        findall(X, ( between(RS, K1, C), gap_x(G, C, X) ), Gaps),
+        forward_ends(Db, S0, S, T, SBox, TBox, Ds, Start, Levels, End)
+    ),
+    path(Start, Levels, Gaps, End, Pts0),
+    simplify(Pts0, Pts).
+
+%  forward_ends(..., -Start, -Levels, -End): Levels holds the y of the flow in
+%  each column; a node with several outgoing (incoming) flows may use its
+%  bottom or top side, all others leave right and enter left
+forward_ends(Db, S0, S, T, s(SX, SY, SW, SH), s(TX, TY, TW, TH), Ds, Start, Levels, End) :-
+    SCX is SX + SW // 2, SCY is SY + SH // 2, SB is SY + SH,
+    TCX is TX + TW // 2, TCY is TY + TH // 2,
+    append(Ds, [TCY], [L1|Ls]),
+    (   S0 \== S                                    % boundary event: leave below
+    ->  Start = [p(SCX, SB), p(SCX, L)],
+        (   L1 > SB, L = L1 ; L is SB + 12 ),
+        Levels0 = [L, L1|Ls]
+    ;   fans_out(Db, S0), L1 =\= SCY
+    ->  ( L1 > SCY -> Port = SB ; Port = SY ),
+        (   Start = [p(SCX, Port), p(SCX, L1)], Levels0 = [L1, L1|Ls]
+        ;   SR is SX + SW, Start = [p(SR, SCY)], Levels0 = [SCY, L1|Ls]
+        )
+    ;   SR is SX + SW, Start = [p(SR, SCY)], Levels0 = [SCY, L1|Ls]
+    ),
+    append(Init, [Prev, TCY], Levels0),
+    (   fans_in(Db, T), Prev =\= TCY
+    ->  ( Prev > TCY -> Port1 is TY + TH ; Port1 = TY ),
+        (   append(Init, [Prev, Prev], Levels), End = [p(TCX, Prev), p(TCX, Port1)]
+        ;   Levels = Levels0, End = [p(TX, TCY)]
+        )
+    ;   Levels = Levels0, End = [p(TX, TCY)]
+    ).
+
+%  back edges leave the source below (or above), run left through the free
+%  channel between rows, change channels in the gap right of the target and
+%  enter it from below (or from above, when that side is taken); on an
+%  activity they keep off the centre, which message flows and branches use
+back_ends(G, F, S0, S, T, s(SX, SY, SW, SH), s(TX, TY, TW, TH), Start, [LS, LT], End) :-
+    G = g(Db, _, _, _, _, _, _, _),
+    SCY is SY + SH // 2, SB is SY + SH,
+    TCY is TY + TH // 2, TB is TY + TH,
+    ( is_activity(Db, S0) -> SCX is SX + SW // 4 ; SCX is SX + SW // 2 ),
+    ( is_activity(Db, T) -> TCX is TX + 3 * TW // 4 ; TCX is TX + TW // 2 ),
+    row_h(RH), Half is RH // 2,
+    (   S0 \== S -> LS is SB + 12, SPort = SB
+    ;   sides(G, F, S0, SDirs),
+        member(SDir, SDirs),
+        (   SDir == below -> LS is SCY + Half, SPort = SB
+        ;   LS is SCY - Half, SPort = SY
+        )
+    ),
+    sides(G, F, T, TDirs),
+    member(TDir, TDirs),
+    (   TDir == below -> LT is TCY + Half, TPort = TB
+    ;   LT is TCY - Half, TPort = TY
+    ),
+    Start = [p(SCX, SPort), p(SCX, LS)],
+    End = [p(TCX, LT), p(TCX, TPort)].
+
+loop_route(G, S0, S, R, s(SX, SY, SW, SH), s(TX, TY, TW, TH), Pts) :-
+    SCX is SX + SW // 2, SCY is SY + SH // 2, SB is SY + SH,
+    TCX is TX + TW // 2, TB is TY + TH,
+    (   S0 \== S
+    ->  L is SB + 12,
+        Pts = [p(SCX, SB), p(SCX, L), p(TCX, L), p(TCX, TB)]
+    ;   gap_x(G, R, GX), SR is SX + SW, row_h(RH), L is SCY + RH // 2,
+        Pts = [p(SR, SCY), p(GX, SCY), p(GX, L), p(SCX, L), p(SCX, SB)]
+    ).
+
+is_activity(Db, Id) :- member(node(Id, T, _, _), Db), !, activity(T).
+
+fans_out(Db, Id) :-
+    (   member(node(Id, gateway(_), _, _), Db) -> true
+    ;   findall(F, member(flow(F, Id, _, _, _), Db), [_, _|_])
+    ).
+
+fans_in(Db, Id) :-
+    (   member(node(Id, gateway(_), _, _), Db) -> true
+    ;   findall(F, member(flow(F, _, Id, _, _), Db), [_, _|_])
+    ).
+
+%  sides(+G, +Flow, +Node, -Sides): below and above, the free ones first
+sides(G, F, N, Sides) :-
+    findall(D, ( member(D, [below, above]), \+ busy(G, F, N, D) ), Free),
+    findall(D, ( member(D, [below, above]), busy(G, F, N, D) ), Taken),
+    append(Free, Taken, Sides).
+
+%  busy(+G, +Flow, +Node, ?Side): another flow probably uses that side of
+%  Node: a message flow (pools are stacked in the order they are declared),
+%  or a branch to or from another row of a node that fans out (in)
+busy(g(Db, _, _, _, _, _, _, Shapes), F, N, Side) :-
+    (   ( member(mflow(_, N, O, _), Db) ; member(mflow(_, O, N, _), Db) ),
+        pool_of(Db, N, P), pool_of(Db, O, PO),
+        findall(X, member(pool(X, _, _), Db), Ps),
+        nth0(I, Ps, P), nth0(IO, Ps, PO), IO =\= I,
+        ( IO > I -> Side = below ; Side = above )
+    ;   (   fans_out(Db, N), member(flow(F1, N, O, _, _), Db)
+        ;   fans_in(Db, N), member(flow(F1, O, N, _, _), Db)
+        ),
+        F1 \== F,
+        memberchk(shape(N, _, NY, _, NH), Shapes), memberchk(shape(O, _, OY, _, OH), Shapes),
+        NC is NY + NH // 2, OC is OY + OH // 2, OC =\= NC,
+        ( OC > NC -> Side = below ; Side = above )
+    ), !.
+
+%  path(+Start, +Levels, +Gaps, +End, -Points): the flow runs at Levels[i] in
+%  column i and changes level in the gap Gaps[i] to the right of it
+path(Start, Levels, Gaps, End, Pts) :-
+    jogs(Gaps, Levels, Mid),
+    append([Start, Mid, End], Pts).
+
+jogs([], _, []).
+jogs([X|Xs], [L1, L2|Ls], [p(X, L1), p(X, L2)|Ps]) :- jogs(Xs, [L2|Ls], Ps).
+
+simplify([P, P|Ps], Qs) :- !, simplify([P|Ps], Qs).
+simplify([p(X1, Y1), p(X2, Y2), p(X3, Y3)|Ps], Qs) :-
+    ( X1 =:= X2, X2 =:= X3 ; Y1 =:= Y2, Y2 =:= Y3 ), !,
+    simplify([p(X1, Y1), p(X3, Y3)|Ps], Qs).
+simplify([], []).
+simplify([P|Ps], [P|Qs]) :- simplify(Ps, Qs).
+
+%  clear(+Shapes, +Except, +Points): no segment runs through another shape
+clear(Shapes, Except, Pts) :-
+    \+ ( append(_, [p(X1, Y1), p(X2, Y2)|_], Pts),
+         member(shape(Id, X, Y, W, H), Shapes), \+ memberchk(Id, Except),
+         min(X1, X2) < X + W - 1, max(X1, X2) > X + 1,
+         min(Y1, Y2) < Y + H - 1, max(Y1, Y2) > Y + 1 ).
+
+dummy_y(g(_, _, _, RowA, LaneA, Bands, _, _), D, Y) :-
+    get_assoc(D, RowA, Row), get_assoc(D, LaneA, L),
+    nth0(L, Bands, band(_, BY, _)),
+    row_h(RH), Y is BY + 70 + Row * RH.
+
+gap_x(g(_, X0, _, _, _, _, _, _), C, X) :-
+    col_w(CW), X is X0 + 70 + C * CW + CW // 2.
+
+%  separate(+Xs-Ys, +Edges0, -Edges): segments of different edges that overlap
+%  on the same line (a gap's x or a channel's y) are moved onto parallel tracks
+separate(Xs-Ys, Es0, Es) :-
+    separate(v, Xs, Es0, Es1),
+    separate(h, Ys, Es1, Es).
+
+separate(O, Lines, Es0, Es) :-
+    findall(s(L, Lo, Hi, K, I), ( nth0(K, Es0, edge(_, Pts)), nth0(I, Pts, P1),
+                                  I1 is I + 1, nth0(I1, Pts, P2),
+                                  on_line(O, P1, P2, L, Lo, Hi), memberchk(L, Lines) ),
+            Segs),
+    foldl(track, Segs, [], Tracks),
+    findall(edge(F, Pts), ( nth0(K, Es0, edge(F, Pts0)),
+                            findall(Q, ( nth0(J, Pts0, P), shifted(O, Tracks, K, J, P, Q) ),
+                                    Pts) ),
+            Es).
+
+on_line(v, p(X, Y1), p(X, Y2), X, Lo, Hi) :- Y1 =\= Y2, Lo is min(Y1, Y2), Hi is max(Y1, Y2).
+on_line(h, p(X1, Y), p(X2, Y), Y, Lo, Hi) :- X1 =\= X2, Lo is min(X1, X2), Hi is max(X1, X2).
+
+track(s(L, Lo, Hi, K, I), Ts, [t(K, I, D, L, Lo, Hi)|Ts]) :-
+    (   member(D, [0, 8, -8, 16, -16]),
+        \+ ( member(t(K2, _, D, L, Lo2, Hi2), Ts), K2 \== K, Lo < Hi2, Lo2 < Hi )
+    ->  true
+    ;   D = 0
+    ).
+
+shifted(O, Ts, K, J, p(X, Y), P) :-
+    J0 is J - 1,
+    (   ( memberchk(t(K, J, D, _, _, _), Ts) ; memberchk(t(K, J0, D, _, _, _), Ts) ), D =\= 0
+    ->  ( O == v -> X1 is X + D, P = p(X1, Y) ; Y1 is Y + D, P = p(X, Y1) )
+    ;   P = p(X, Y)
+    ).
+
+%  message flows: vertical between pools, through the gap below/above the
+%  source pool; an end blocked by other shapes leaves through the channel
+%  beside its row and the gap next to it
 mflow_edge(Db, PoolBoxes, NodeShapes, Gap, M, S, T, edge(M, Pts)) :-
-    end_box(Db, PoolBoxes, NodeShapes, S, SKind, s(SX, SY, SW, SH)),
-    end_box(Db, PoolBoxes, NodeShapes, T, TKind, s(TX, TY, TW, TH)),
+    end_box(Db, PoolBoxes, NodeShapes, S, SId, SKind, s(SX, SY, SW, SH)),
+    end_box(Db, PoolBoxes, NodeShapes, T, TId, TKind, s(TX, TY, TW, TH)),
     pool_of(Db, S, SP), memberchk(SP-s(_, SPY, _, SPH), PoolBoxes),
-    SCX0 is SX + SW // 2, TCX0 is TX + TW // 2,
-    (   SKind == pool, TKind \== pool -> SCX = TCX0, TCX = TCX0
-    ;   TKind == pool, SKind \== pool -> SCX = SCX0, TCX = SCX0
-    ;   SCX = SCX0, TCX = TCX0
-    ),
+    SCX is SX + SW // 2, TCX is TX + TW // 2,
     (   SY < TY
-    ->  Y1 is SY + SH, Y2 = TY, MY is SPY + SPH + Gap // 2
-    ;   Y1 = SY, Y2 is TY + TH, MY is SPY - Gap // 2
+    ->  Y1 is SY + SH, Y2 = TY, MY is SPY + SPH + Gap // 2, Dir = 1
+    ;   Y1 = SY, Y2 is TY + TH, MY is SPY - Gap // 2, Dir = -1
     ),
-    (   SCX =:= TCX
-    ->  Pts = [p(SCX, Y1), p(TCX, Y2)]
-    ;   Pts = [p(SCX, Y1), p(SCX, MY), p(TCX, MY), p(TCX, Y2)]
+    Back is -Dir,
+    findall(Ps, ( mf_legs(SKind-SCX-Y1-SH-Dir, TKind-TCX-Y2-TH-Back, MY, Out, In),
+                  reverse(In, NI), append(Out, NI, Ps0), simplify(Ps0, Ps) ),
+            [First|Cands]),
+    (   member(Pts, [First|Cands]), clear(NodeShapes, [SId, TId], Pts) -> true
+    ;   Pts = First
     ).
 
-end_box(_, PoolBoxes, _, X, pool, B) :- memberchk(X-B, PoolBoxes), !.
-end_box(_, _, Shapes, X, node, s(SX, SY, W, H)) :-
+%  mf_legs(+Source, +Target, +MY, -Out, -In): both legs; a pool end simply
+%  continues the other leg straight on
+mf_legs(pool-_-Y1-_-_, TK-X2-Y2-H2-D2, MY, [p(X, Y1), p(X, MY)], In) :-
+    TK \== pool, !,
+    mf_leg(TK, X2, Y2, H2, D2, MY, In), append(_, [p(X, MY)], In).
+mf_legs(SK-X1-Y1-H1-D1, pool-_-Y2-_-_, MY, Out, [p(X, Y2), p(X, MY)]) :-
+    SK \== pool, !,
+    mf_leg(SK, X1, Y1, H1, D1, MY, Out), append(_, [p(X, MY)], Out).
+mf_legs(SK-X1-Y1-H1-D1, TK-X2-Y2-H2-D2, MY, Out, In) :-
+    mf_leg(SK, X1, Y1, H1, D1, MY, Out),
+    mf_leg(TK, X2, Y2, H2, D2, MY, In).
+
+%  mf_leg(+Kind, +X, +Port, +Height, +Dir, +MY, -Points): from the port to the
+%  pool gap at MY, straight or through the channel and the gap left or right
+mf_leg(_, X, Y, _, _, MY, [p(X, Y), p(X, MY)]).
+mf_leg(node, X, Y, H, Dir, MY, [p(X, Y), p(X, YC), p(GX, YC), p(GX, MY)]) :-
+    row_h(RH), col_w(CW),
+    YC is Y + Dir * ((RH - H) // 2),
+    member(Side, [1, -1]),
+    GX is X + Side * (CW // 2).
+
+end_box(_, PoolBoxes, _, X, X, pool, B) :- memberchk(X-B, PoolBoxes), !.
+end_box(_, _, Shapes, X, X, node, s(SX, SY, W, H)) :-
     memberchk(shape(X, SX, SY, W, H), Shapes), !.
-end_box(Db, PoolBoxes, Shapes, X, K, B) :-      % inside a collapsed subprocess
+end_box(Db, PoolBoxes, Shapes, X, Id, K, B) :-  % inside a collapsed subprocess
     member(node(X, _, _, C), Db),
-    end_box(Db, PoolBoxes, Shapes, C, K, B).
+    end_box(Db, PoolBoxes, Shapes, C, Id, K, B).
 
 /* =====================================================================
    5. XML term -> text  (a DCG; no string concatenation anywhere)
