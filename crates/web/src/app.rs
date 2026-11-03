@@ -102,7 +102,7 @@ pub fn App() -> impl IntoView {
             <h1>"BPMN in Prolog"</h1>
             <p>
                 "Model BPMN as Prolog terms, reason about them with Scryer Prolog "
-                "and see them drawn by bpmn-js. Everything runs in your browser."
+                "and see them drawn by bpmn-js:"
             </p>
         </header>
         <main class="split">

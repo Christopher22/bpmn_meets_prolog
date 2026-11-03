@@ -1,7 +1,7 @@
 # BPMN in Prolog
 
 Model BPMN as Prolog terms, reason about them with Scryer Prolog, and see them
-drawn by bpmn-js. [Everything runs in the browser, try it out!](https://christopher22.github.io/bpmn_meets_prolog/).
+drawn by bpmn-js. [Everything runs in the browser, try it out!](https://christopher22.github.io/bpmn_meets_prolog/)
 
 The editor on the left holds a Prolog program in the [`bpmn.pl`](prolog/bpmn.pl)
 DSL that defines `model/1` (see [`pizza.pl`](prolog/pizza.pl) for the DSL). On
@@ -77,3 +77,6 @@ These workarounds are documented where they live in the code:
   into out-of-bounds accesses on wasm32.
 - Debug builds compile Scryer optimised and without debug assertions, because
   a debug-only UB check aborts when a machine is built.
+
+## License
+This project ois licensed under the [MIT license](LICENSE).
