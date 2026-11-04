@@ -14,6 +14,7 @@ mod components;
 mod files;
 mod highlight;
 mod indent;
+mod rename;
 mod syntax;
 mod vocabulary;
 

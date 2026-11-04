@@ -72,6 +72,8 @@ pub(crate) struct AppState {
     /// Set when another program was opened: the next diagram is not just an
     /// edit of the current one, so its viewport is not kept.
     pub(crate) fit_diagram: StoredValue<bool>,
+    /// Set by the diagram: the element id the editor should offer to rename.
+    pub(crate) rename_request: RwSignal<Option<String>>,
 }
 
 /// The whole page: a title above the editor (left) and the diagram (right).
@@ -86,6 +88,7 @@ pub fn App() -> impl IntoView {
         last: RwSignal::new(None),
         editor: NodeRef::new(),
         fit_diagram: StoredValue::new(false),
+        rename_request: RwSignal::new(None),
     };
     provide_context(state);
 

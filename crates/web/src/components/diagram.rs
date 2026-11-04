@@ -4,6 +4,8 @@ use bpmn_engine::{Outcome, Problem, Rendering};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::Closure;
 
 use crate::app::{AppState, LastRender};
 use crate::bpmn_js::Viewer;
@@ -44,6 +46,7 @@ pub(crate) fn Diagram() -> impl IntoView {
     let state = expect_context::<AppState>();
     let container = NodeRef::<html::Div>::new();
     let viewer = StoredValue::new_local(None::<Viewer>);
+    let double_click = StoredValue::new_local(None::<Closure<dyn FnMut(JsValue)>>);
     let error = RwSignal::new(None::<String>);
     let shown = RwSignal::new(false);
     let generation = StoredValue::new(0_u64);
@@ -62,6 +65,9 @@ pub(crate) fn Diagram() -> impl IntoView {
             Some(current) => current,
             None => match Viewer::new(&element) {
                 Ok(created) => {
+                    double_click.set_value(Some(created.on_double_click(move |id| {
+                        state.rename_request.set(Some(id));
+                    })));
                     viewer.set_value(Some(created.clone()));
                     created
                 }

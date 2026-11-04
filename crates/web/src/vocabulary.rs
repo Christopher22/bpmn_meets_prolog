@@ -105,6 +105,11 @@ pub(crate) fn lookup(name: &str) -> impl Iterator<Item = &'static Entry> {
     ENTRIES.iter().filter(move |entry| entry.name == name)
 }
 
+/// Whether `name` is a trigger, task kind or flow label.
+pub(crate) fn is_value(name: &str) -> bool {
+    lookup(name).any(|entry| entry.category == Category::Value)
+}
+
 impl Entry {
     /// The byte range of the template's first argument, which is selected
     /// after insertion so it can be typed over.

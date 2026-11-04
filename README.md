@@ -15,7 +15,9 @@ every edit:
    the model. Enter keeps the indentation (one level deeper after `(`, `[` or
    `{`), Tab and Shift+Tab indent and outdent the current or selected lines,
    and Backspace removes indentation a level at a time. Escape, then Tab,
-   moves the focus out of the editor.
+   moves the focus out of the editor. F2, or double-clicking an element in the
+   diagram, renames the id, atom or variable at the caret everywhere it is used,
+   leaving strings and comments alone.
 2. **Prolog** (`bpmn-engine` in a Web Worker): 250 ms after typing pauses, the
    clauses are loaded one by one into Scryer Prolog. `model/1` is linted with
    `bpmn_check/2` and turned into BPMN 2.0 XML with `bpmn_chars/2`.

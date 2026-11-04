@@ -1,6 +1,8 @@
 //! Syntax highlighting: the editor text as HTML for the overlay behind the
 //! text area.
 
+use std::ops::Range;
+
 use bpmn_syntax::{SyntaxError, Token, TokenKind, tokenize};
 
 use crate::vocabulary::{self, Category};
@@ -10,8 +12,12 @@ use crate::vocabulary::{self, Category};
 /// The text itself is unchanged (only escaped), so the overlay lines up
 /// with the text area character for character. The token at `error` is
 /// underlined; an error between tokens (such as a missing `.`) gets a
-/// zero-width marker.
-pub(crate) fn to_html(source: &str, error: Option<&SyntaxError>) -> String {
+/// zero-width marker. Tokens at the spans in `marked` are highlighted.
+pub(crate) fn to_html(
+    source: &str,
+    error: Option<&SyntaxError>,
+    marked: &[Range<usize>],
+) -> String {
     let mut html = String::with_capacity(source.len() * 3 / 2);
     let mut pending_error = error.map(|error| error.offset);
     let mut end = 0;
@@ -25,6 +31,9 @@ pub(crate) fn to_html(source: &str, error: Option<&SyntaxError>) -> String {
         html.push_str(class(&token));
         if flagged {
             html.push_str(" t-error");
+        }
+        if marked.contains(&token.span) {
+            html.push_str(" t-rename");
         }
         html.push_str("\">");
         escape(&mut html, token.text);
@@ -43,12 +52,7 @@ pub(crate) fn to_html(source: &str, error: Option<&SyntaxError>) -> String {
 const MARKER: &str = "<span class=\"t-mark\"></span>";
 
 /// Writes the layout in `range`, with the error marker if it falls inside.
-fn layout(
-    html: &mut String,
-    source: &str,
-    range: std::ops::Range<usize>,
-    error: &mut Option<usize>,
-) {
+fn layout(html: &mut String, source: &str, range: Range<usize>, error: &mut Option<usize>) {
     match error.take_if(|at| range.contains(at)) {
         Some(at) => {
             escape(html, &source[range.start..at]);
@@ -111,7 +115,7 @@ mod tests {
 
     #[test]
     fn classifies_and_escapes() {
-        let html = to_html("model(M) :- task(t, \"a<b\", user), M @< 1.", None);
+        let html = to_html("model(M) :- task(t, \"a<b\", user), M @< 1.", None, &[]);
         assert!(html.starts_with("<span class=\"t-functor\">model</span>"));
         assert!(html.contains("<span class=\"t-dsl\">task</span>"));
         assert!(html.contains("<span class=\"t-value\">user</span>"));
@@ -127,7 +131,7 @@ mod tests {
             "a(\"open\nb & c. % <x>\n",
             "  \n\tx.",
         ] {
-            assert_eq!(text_of(&to_html(source, None)), format!("{source}\n"));
+            assert_eq!(text_of(&to_html(source, None, &[])), format!("{source}\n"));
         }
     }
 
@@ -135,11 +139,13 @@ mod tests {
     fn flags_errors() {
         let source = "a([b).";
         let error = bpmn_syntax::check(source).unwrap_err();
-        assert!(to_html(source, Some(&error)).contains("<span class=\"t-punct t-error\">)</span>"));
+        assert!(
+            to_html(source, Some(&error), &[]).contains("<span class=\"t-punct t-error\">)</span>")
+        );
 
         let source = "a :- b   ";
         let error = bpmn_syntax::check(source).unwrap_err();
-        let html = to_html(source, Some(&error));
+        let html = to_html(source, Some(&error), &[]);
         assert!(
             html.contains(&format!("<span class=\"t-atom\">b</span>{MARKER}   ")),
             "{html}"

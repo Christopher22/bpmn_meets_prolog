@@ -2,6 +2,7 @@
 
 mod diagram;
 mod editor;
+mod rename_box;
 mod status;
 mod toolbar;
 

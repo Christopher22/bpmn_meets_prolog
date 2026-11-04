@@ -12,10 +12,12 @@ use web_sys::{
     ScrollLogicalPosition,
 };
 
+use super::rename_box::RenameBox;
 use crate::app::AppState;
 use crate::completion::{self, Completion};
 use crate::highlight;
 use crate::indent::{self, Edit};
+use crate::rename::{self, Refusal, Target};
 
 /// Assumed height of the completion list when deciding whether it fits below
 /// the caret (matches `max-height` in `style.css`).
@@ -40,12 +42,18 @@ pub(crate) fn Editor(initial: &'static str) -> impl IntoView {
     let overlay = NodeRef::<html::Pre>::new();
     let measure = NodeRef::<html::Span>::new();
     let popup = RwSignal::new(None::<Popup>);
+    let renaming = RwSignal::new(None::<Result<Target, Refusal>>);
 
     let highlighted = Memo::new(move |_| {
+        let renaming = renaming.read();
+        let marked = match &*renaming {
+            Some(Ok(target)) => target.occurrences.as_slice(),
+            _ => &[],
+        };
         state.source.with(|source| {
             state
                 .syntax
-                .with(|report| highlight::to_html(source, report.result.as_ref().err()))
+                .with(|report| highlight::to_html(source, report.result.as_ref().err(), marked))
         })
     });
 
@@ -69,8 +77,19 @@ pub(crate) fn Editor(initial: &'static str) -> impl IntoView {
         popup,
         inserting: StoredValue::new(false),
         leave_on_tab: StoredValue::new(false),
+        renaming,
+        rename_cursor: StoredValue::new(0),
+        rename_style: RwSignal::new(String::new()),
     };
     let accept = move |index| controller.accept(index);
+
+    // A double click in the diagram asks to rename an element.
+    Effect::new(move |_| {
+        if let Some(id) = state.rename_request.get() {
+            state.rename_request.set(None);
+            controller.rename_element(&id);
+        }
+    });
 
     view! {
         <div class="editor">
@@ -86,7 +105,7 @@ pub(crate) fn Editor(initial: &'static str) -> impl IntoView {
             <textarea
                 class="editor-code editor-input"
                 node_ref=state.editor
-                aria-label="Prolog program. Tab indents; press Escape, then Tab, to leave."
+                aria-label="Prolog program. Tab indents; press Escape, then Tab, to leave. F2 renames."
                 aria-autocomplete="list"
                 aria-controls="completions"
                 aria-expanded=move || popup.with(Option::is_some).to_string()
@@ -103,11 +122,19 @@ pub(crate) fn Editor(initial: &'static str) -> impl IntoView {
                 on:scroll=move |_| {
                     sync_scroll();
                     popup.set(None);
+                    controller.place_rename();
                 }
-                on:blur=move |_| popup.set(None)
-                on:click=move |_| popup.set(None)
+                on:blur=move |_| {
+                    popup.set(None);
+                    controller.dismiss_refusal();
+                }
+                on:click=move |_| {
+                    popup.set(None);
+                    controller.dismiss_refusal();
+                }
             ></textarea>
             {move || popup.get().map(|open| completion_list(open, accept))}
+            {move || renaming.get().map(|outcome| rename_overlay(outcome, controller))}
         </div>
     }
 }
@@ -125,9 +152,95 @@ struct Controller {
     /// Set by Escape: the next Tab moves the focus instead of indenting, so
     /// keyboard users are not trapped in the editor.
     leave_on_tab: StoredValue<bool>,
+    /// The open rename input, or why there is nothing to rename.
+    renaming: RwSignal<Option<Result<Target, Refusal>>>,
+    /// The byte offset the rename input belongs to.
+    rename_cursor: StoredValue<usize>,
+    /// CSS placing the rename input at `rename_cursor`.
+    rename_style: RwSignal<String>,
 }
 
 impl Controller {
+    /// Opens the rename input for the identifier at the caret.
+    fn start_rename(self) {
+        let Some(textarea) = self.state.editor.get_untracked() else {
+            return;
+        };
+        let text = textarea.value();
+        let caret = textarea.selection_start().ok().flatten().unwrap_or(0);
+        let cursor = byte_offset(&text, caret);
+        self.popup.set(None);
+        let line = text[..cursor].matches('\n').count();
+        keep_line_visible(&textarea, line, text.matches('\n').count() + 1);
+        self.rename_cursor.set_value(cursor);
+        self.place_rename();
+        self.renaming.set(Some(rename::target(&text, cursor)));
+    }
+
+    /// Opens the rename input for the diagram element `id`, if the program
+    /// still mentions it.
+    fn rename_element(self, id: &str) {
+        let text = self.state.source.get_untracked();
+        let Some(offset) = rename::first_occurrence(&text, id) else {
+            return;
+        };
+        let before = &text[..offset];
+        let line = before.matches('\n').count() + 1;
+        let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+        reveal(
+            self.state.editor,
+            u32::try_from(line).unwrap_or(u32::MAX),
+            u32::try_from(column).unwrap_or(u32::MAX),
+        );
+        self.start_rename();
+    }
+
+    /// Keeps the rename input at its text, which may have scrolled.
+    fn place_rename(self) {
+        if let Some(textarea) = self.state.editor.get_untracked() {
+            self.rename_style.set(placement(
+                &textarea,
+                self.measure,
+                &textarea.value(),
+                self.rename_cursor.get_value(),
+            ));
+        }
+    }
+
+    fn commit_rename(self, new_name: &str) {
+        let Some(Some(Ok(target))) = self.renaming.try_get_untracked() else {
+            return;
+        };
+        self.renaming.set(None);
+        let Some(textarea) = self.state.editor.get_untracked() else {
+            return;
+        };
+        let _ = textarea.focus();
+        if new_name != target.name {
+            let (top, left) = (textarea.scroll_top(), textarea.scroll_left());
+            self.apply(&rename::edit(&textarea.value(), &target, new_name));
+            textarea.set_scroll_top(top);
+            textarea.set_scroll_left(left);
+        }
+    }
+
+    fn cancel_rename(self) {
+        self.renaming.set(None);
+        if let Some(textarea) = self.state.editor.get_untracked() {
+            let _ = textarea.focus();
+        }
+    }
+
+    /// Closes the message shown when there was nothing to rename.
+    fn dismiss_refusal(self) {
+        if self
+            .renaming
+            .with_untracked(|renaming| matches!(renaming, Some(Err(_))))
+        {
+            self.renaming.set(None);
+        }
+    }
+
     /// Opens, updates or closes the list for the word at the caret.
     fn refresh(self, explicit: bool) {
         let Some(textarea) = self.state.editor.get_untracked() else {
@@ -247,6 +360,12 @@ impl Controller {
         if event.is_composing() {
             return;
         }
+        self.dismiss_refusal();
+        if event.key() == "F2" {
+            event.prevent_default();
+            self.start_rename();
+            return;
+        }
         let leave_on_tab = self.leave_on_tab.get_value();
         self.leave_on_tab.set_value(false);
         if event.ctrl_key() && event.code() == "Space" {
@@ -316,6 +435,28 @@ impl Controller {
             }
             _ => {}
         }
+    }
+}
+
+/// The rename input, or why there is nothing to rename.
+fn rename_overlay(outcome: Result<Target, Refusal>, controller: Controller) -> impl IntoView {
+    match outcome {
+        Ok(target) => view! {
+            <RenameBox
+                target
+                style=controller.rename_style
+                on_commit=move |new_name: String| controller.commit_rename(&new_name)
+                on_escape=move || controller.cancel_rename()
+                on_blur=move || controller.renaming.set(None)
+            />
+        }
+        .into_any(),
+        Err(refusal) => view! {
+            <p class="rename-box rename-error" role="status" style=controller.rename_style>
+                {refusal.to_string()}
+            </p>
+        }
+        .into_any(),
     }
 }
 
@@ -414,6 +555,8 @@ fn placement(
     let below =
         pixels("padding-top") + count(line + 1) * line_height - f64::from(textarea.scroll_top());
     let height = f64::from(textarea.client_height());
+    // A caret scrolled out of view leaves the list at the nearest edge.
+    let below = below.min(height).max(line_height);
     if below + LIST_HEIGHT > height && below - line_height > LIST_HEIGHT {
         let bottom = height - (below - line_height);
         format!("left: {left:.0}px; bottom: {bottom:.0}px")
@@ -474,6 +617,20 @@ fn utf16_offset(text: &str, line: u32, column: u32) -> (u32, u32) {
         }
     }
     (u32::try_from(offset).unwrap_or(u32::MAX), lines)
+}
+
+/// Scrolls to the 0-based `line` unless it is already in view.
+fn keep_line_visible(textarea: &HtmlTextAreaElement, line: usize, lines: usize) {
+    let (line, lines) = (
+        u32::try_from(line).unwrap_or(u32::MAX),
+        u32::try_from(lines).unwrap_or(u32::MAX),
+    );
+    let line_height = f64::from(textarea.scroll_height()) / f64::from(lines.max(1));
+    let top = f64::from(line) * line_height;
+    let scrolled = f64::from(textarea.scroll_top());
+    if top < scrolled || top + line_height > scrolled + f64::from(textarea.client_height()) {
+        scroll_to_line(textarea, line.saturating_add(1), lines);
+    }
 }
 
 fn scroll_to_line(textarea: &HtmlTextAreaElement, line: u32, lines: u32) {

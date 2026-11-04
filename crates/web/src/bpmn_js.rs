@@ -1,7 +1,7 @@
 //! Bindings to the bpmn-js navigated viewer, loaded by `index.html` as the
 //! global `BpmnJS`.
 
-use js_sys::{Object, Promise, Reflect};
+use js_sys::{Function, Object, Promise, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::HtmlElement;
@@ -24,6 +24,13 @@ extern "C" {
 
     #[wasm_bindgen(method)]
     fn destroy(this: &Viewer);
+
+    /// diagram-js' `eventBus` service.
+    #[derive(Debug, Clone)]
+    type EventBus;
+
+    #[wasm_bindgen(method)]
+    fn on(this: &EventBus, event: &str, callback: &Function);
 
     /// diagram-js' `canvas` service.
     #[derive(Debug, Clone)]
@@ -92,6 +99,23 @@ impl Viewer {
         Ok(())
     }
 
+    /// Calls `handler` with the id of every double-clicked element, a label
+    /// counting as its element. The canvas itself is no element. The listener
+    /// lives as long as the returned closure.
+    pub fn on_double_click(
+        &self,
+        handler: impl Fn(String) + 'static,
+    ) -> Closure<dyn FnMut(JsValue)> {
+        let listener = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
+            if let Some(id) = double_clicked_id(&event) {
+                handler(id);
+            }
+        });
+        let bus: EventBus = self.get("eventBus").unchecked_into();
+        bus.on("element.dblclick", listener.as_ref().unchecked_ref());
+        listener
+    }
+
     /// Releases the viewer's DOM and listeners.
     pub fn dispose(&self) {
         self.destroy();
@@ -100,4 +124,18 @@ impl Viewer {
     fn canvas(&self) -> Canvas {
         self.get("canvas").unchecked_into()
     }
+}
+
+/// The id of the element behind an `element.dblclick` event, unless it is the
+/// root, which has no parent.
+fn double_clicked_id(event: &JsValue) -> Option<String> {
+    let property = |object: &JsValue, name: &str| {
+        Reflect::get(object, &name.into())
+            .ok()
+            .filter(|value| !value.is_undefined() && !value.is_null())
+    };
+    let element = property(event, "element")?;
+    property(&element, "parent")?;
+    let element = property(&element, "labelTarget").unwrap_or(element);
+    property(&element, "id")?.as_string()
 }
