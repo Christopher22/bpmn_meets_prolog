@@ -23,7 +23,9 @@ every edit:
    `bpmn_check/2` and turned into BPMN 2.0 XML with `bpmn_chars/2`.
    Directives run as well, and what they print is shown under the editor.
 3. **Diagram** (bpmn-js navigated viewer): the XML is imported, keeping the
-   current viewport, and elements with problems are outlined in red.
+   current viewport, and elements with problems are outlined in red. The
+   buttons at the top right of the diagram zoom in and out and fit it to the
+   pane.
 
 The buttons in the header open a Prolog program and save the current one as
 Prolog (`.pl`) or BPMN 2.0 XML (`.bpmn`). Saving as BPMN is available once the

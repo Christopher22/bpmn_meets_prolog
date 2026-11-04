@@ -142,6 +142,15 @@ body {
   inset: 0;
 }
 
+/* Top-right, clear of the overlay and the bpmn.io watermark below. */
+.zoom-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 4px;
+}
+
 /* Bottom-left, clear of the bpmn.io watermark (bottom-right), which the
    bpmn-js license requires to stay fully visible. */
 .overlay {

@@ -104,8 +104,45 @@ pub(crate) fn Diagram() -> impl IntoView {
         }
     });
 
+    let on_viewer = move |action: fn(&Viewer)| {
+        viewer.with_value(|current| {
+            if let Some(current) = current {
+                action(current);
+            }
+        });
+    };
+
     view! {
         <div class="canvas" node_ref=container></div>
+        <div class="zoom-controls" role="group" aria-label="Zoom">
+            <button
+                class="button"
+                title="Zoom in"
+                aria-label="Zoom in"
+                disabled=move || !shown.get()
+                on:click=move |_| on_viewer(Viewer::zoom_in)
+            >
+                "+"
+            </button>
+            <button
+                class="button"
+                title="Zoom out"
+                aria-label="Zoom out"
+                disabled=move || !shown.get()
+                on:click=move |_| on_viewer(Viewer::zoom_out)
+            >
+                "−"
+            </button>
+            <button
+                class="button"
+                title="Fit the diagram into the pane"
+                aria-label="Fit the diagram into the pane"
+                disabled=move || !shown.get()
+                on:click=move |_| on_viewer(Viewer::fit)
+            >
+                "Fit"
+            </button>
+        </div>
         <Show when=move || !shown.get() && error.with(Option::is_none)>
             <p class="overlay">"Waiting for the first model…"</p>
         </Show>

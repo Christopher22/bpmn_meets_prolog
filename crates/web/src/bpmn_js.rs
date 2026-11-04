@@ -47,6 +47,13 @@ extern "C" {
 
     #[wasm_bindgen(method, catch, js_name = addMarker)]
     fn add_marker(this: &Canvas, element: &str, marker: &str) -> Result<(), JsValue>;
+
+    /// diagram-js' `zoomScroll` service.
+    #[derive(Debug, Clone)]
+    type ZoomScroll;
+
+    #[wasm_bindgen(method, js_name = stepZoom)]
+    fn step_zoom(this: &ZoomScroll, delta: f64);
 }
 
 impl Viewer {
@@ -116,6 +123,21 @@ impl Viewer {
         listener
     }
 
+    /// Zooms in by one step around the centre of the viewport.
+    pub fn zoom_in(&self) {
+        self.zoom_scroll().step_zoom(1.0);
+    }
+
+    /// Zooms out by one step around the centre of the viewport.
+    pub fn zoom_out(&self) {
+        self.zoom_scroll().step_zoom(-1.0);
+    }
+
+    /// Fits the diagram into the viewport.
+    pub fn fit(&self) {
+        self.canvas().zoom_to("fit-viewport");
+    }
+
     /// Releases the viewer's DOM and listeners.
     pub fn dispose(&self) {
         self.destroy();
@@ -123,6 +145,10 @@ impl Viewer {
 
     fn canvas(&self) -> Canvas {
         self.get("canvas").unchecked_into()
+    }
+
+    fn zoom_scroll(&self) -> ZoomScroll {
+        self.get("zoomScroll").unchecked_into()
     }
 }
 
