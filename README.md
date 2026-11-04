@@ -23,6 +23,12 @@ every edit:
 3. **Diagram** (bpmn-js navigated viewer): the XML is imported, keeping the
    current viewport, and elements with problems are outlined in red.
 
+The buttons in the header open a Prolog program and save the current one as
+Prolog (`.pl`) or BPMN 2.0 XML (`.bpmn`). Saving as BPMN is available once the
+text in the editor has rendered to a model. With changes since the last save or
+open, the browser asks before leaving the page, and Open asks before replacing
+them.
+
 ## Layout
 
 | Crate           | Role                                                                        |
@@ -79,4 +85,4 @@ These workarounds are documented where they live in the code:
   a debug-only UB check aborts when a machine is built.
 
 ## License
-This project ois licensed under the [MIT license](LICENSE).
+This project is licensed under the [MIT license](LICENSE).

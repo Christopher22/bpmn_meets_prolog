@@ -29,6 +29,8 @@ pub enum Event {
     Busy,
     /// A render finished.
     Rendered {
+        /// The program that was rendered.
+        program: String,
         /// The rendering, or why the engine could not produce one.
         result: Result<Rendering, String>,
         /// Time spent in Prolog, in milliseconds.
@@ -76,6 +78,7 @@ impl Drop for Connection {
 
 struct InFlight {
     id: u64,
+    program: String,
     _deadline: Timeout,
 }
 
@@ -198,9 +201,13 @@ fn on_message(this: &Rc<RefCell<Inner>>, event: &MessageEvent) {
                 .in_flight
                 .as_ref()
                 .is_some_and(|flight| flight.id == id)
+                && let Some(InFlight { program, .. }) = inner.in_flight.take()
             {
-                inner.in_flight = None;
-                events.push(Event::Rendered { result, millis });
+                events.push(Event::Rendered {
+                    program,
+                    result,
+                    millis,
+                });
                 if inner.pending.is_none() {
                     events.push(Event::Ready);
                 }
@@ -247,6 +254,7 @@ fn pump(this: &Rc<RefCell<Inner>>) -> Vec<Event> {
     inner.next_id += 1;
     inner.in_flight = Some(InFlight {
         id,
+        program: request.program,
         _deadline: deadline,
     });
     vec![Event::Busy]

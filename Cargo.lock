@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "bpmn-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bpmn-syntax",
  "scryer-prolog",
@@ -188,11 +188,11 @@ dependencies = [
 
 [[package]]
 name = "bpmn-syntax"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "bpmn-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bpmn-engine",
  "bpmn-syntax",
@@ -207,7 +207,7 @@ dependencies = [
 
 [[package]]
 name = "bpmn-worker"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bpmn-engine",
  "bpmn-syntax",

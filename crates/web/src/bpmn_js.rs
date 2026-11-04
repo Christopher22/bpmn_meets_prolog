@@ -54,8 +54,8 @@ impl Viewer {
         Self::construct(&options)
     }
 
-    /// Shows `xml`, keeping the current viewport unless this is the first
-    /// diagram, and marks `flagged` elements with the CSS class `marker`.
+    /// Shows `xml`, keeping the current viewport unless `fit` asks to fit the
+    /// diagram into it, and marks `flagged` elements with the CSS class `marker`.
     ///
     /// Unknown element ids in `flagged` are ignored.
     ///
@@ -67,10 +67,10 @@ impl Viewer {
         xml: &str,
         flagged: &[String],
         marker: &str,
-        first: bool,
+        fit: bool,
     ) -> Result<(), String> {
         let canvas = self.canvas();
-        let viewbox = (!first).then(|| canvas.get_viewbox());
+        let viewbox = (!fit).then(|| canvas.get_viewbox());
 
         JsFuture::from(self.import_xml(xml))
             .await

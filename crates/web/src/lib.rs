@@ -11,6 +11,7 @@ mod bpmn_js;
 mod client;
 mod completion;
 mod components;
+mod files;
 mod highlight;
 mod indent;
 mod syntax;

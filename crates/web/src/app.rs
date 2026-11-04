@@ -1,12 +1,12 @@
 //! The page: shared state, the edit → check → render pipeline and layout.
 
-use bpmn_engine::Rendering;
+use bpmn_engine::{Outcome, Rendering};
 use gloo_timers::callback::Timeout;
 use leptos::html;
 use leptos::prelude::*;
 
 use crate::client::{Client, Event};
-use crate::components::{Diagram, Editor, Status};
+use crate::components::{Diagram, Editor, Status, Toolbar};
 use crate::syntax::SyntaxReport;
 
 /// The program shown on first load.
@@ -41,8 +41,23 @@ pub(crate) enum Notice {
 /// The most recent answer from the worker.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LastRender {
+    /// The program this answers.
+    pub(crate) program: String,
     pub(crate) result: Result<Rendering, String>,
     pub(crate) millis: f64,
+}
+
+impl LastRender {
+    /// The BPMN 2.0 XML, if the model could be rendered.
+    pub(crate) fn xml(&self) -> Option<&str> {
+        match &self.result {
+            Ok(Rendering {
+                outcome: Outcome::Rendered { xml, .. },
+                ..
+            }) => Some(xml),
+            _ => None,
+        }
+    }
 }
 
 /// Signals shared by all components (provided as context).
@@ -54,6 +69,9 @@ pub(crate) struct AppState {
     pub(crate) notice: RwSignal<Option<Notice>>,
     pub(crate) last: RwSignal<Option<LastRender>>,
     pub(crate) editor: NodeRef<html::Textarea>,
+    /// Set when another program was opened: the next diagram is not just an
+    /// edit of the current one, so its viewport is not kept.
+    pub(crate) fit_diagram: StoredValue<bool>,
 }
 
 /// The whole page: a title above the editor (left) and the diagram (right).
@@ -67,6 +85,7 @@ pub fn App() -> impl IntoView {
         notice: RwSignal::new(None),
         last: RwSignal::new(None),
         editor: NodeRef::new(),
+        fit_diagram: StoredValue::new(false),
     };
     provide_context(state);
 
@@ -74,9 +93,17 @@ pub fn App() -> impl IntoView {
         Event::Starting => state.engine.set(EngineState::Starting),
         Event::Ready => state.engine.set(EngineState::Ready),
         Event::Busy => state.engine.set(EngineState::Busy),
-        Event::Rendered { result, millis } => {
+        Event::Rendered {
+            program,
+            result,
+            millis,
+        } => {
             state.notice.set(None);
-            state.last.set(Some(LastRender { result, millis }));
+            state.last.set(Some(LastRender {
+                program,
+                result,
+                millis,
+            }));
         }
         Event::TimedOut => state.notice.set(Some(Notice::TimedOut)),
         Event::Crashed(message) => state.notice.set(Some(Notice::Crashed(message))),
@@ -99,11 +126,14 @@ pub fn App() -> impl IntoView {
 
     view! {
         <header class="title">
-            <h1>"BPMN in Prolog"</h1>
-            <p>
-                "Model BPMN as Prolog terms, reason about them with Scryer Prolog "
-                "and see them drawn by bpmn-js:"
-            </p>
+            <div>
+                <h1>"BPMN in Prolog"</h1>
+                <p>
+                    "Model BPMN as Prolog terms, reason about them with Scryer Prolog "
+                    "and see them drawn by bpmn-js:"
+                </p>
+            </div>
+            <Toolbar />
         </header>
         <main class="split">
             <section class="pane editor-pane" aria-label="Prolog program">

@@ -74,9 +74,10 @@ pub(crate) fn Diagram() -> impl IntoView {
 
         generation.update_value(|count| *count += 1);
         let this_import = generation.get_value();
-        let first = !shown.get_untracked();
+        let fit = !shown.get_untracked() || state.fit_diagram.get_value();
+        state.fit_diagram.set_value(false);
         spawn_local(async move {
-            let result = current.show(&xml, &flagged, PROBLEM_MARKER, first).await;
+            let result = current.show(&xml, &flagged, PROBLEM_MARKER, fit).await;
             // A newer import supersedes this one (or the pane is gone).
             if generation.try_get_value() != Some(this_import) {
                 return;
