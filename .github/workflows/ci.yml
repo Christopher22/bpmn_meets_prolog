@@ -21,3 +21,26 @@ jobs:
       - run: cargo clippy --workspace --all-targets
       - run: cargo clippy -p bpmn-web -p bpmn-worker --target wasm32-unknown-unknown
       - run: cargo test --workspace
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # clang cross-compiles ring (a Scryer Prolog dependency) to wasm32.
+      - run: sudo apt-get update && sudo apt-get install -y clang
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r e2e/requirements.txt
+      - run: playwright install --with-deps chromium
+      # Builds the release site and tests it in a browser.
+      - run: pytest e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results

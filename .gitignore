@@ -1,2 +1,6 @@
 /target
 /crates/web/dist
+/e2e/.venv
+/test-results
+__pycache__
+.pytest_cache

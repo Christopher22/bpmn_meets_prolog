@@ -54,10 +54,24 @@ cargo clippy --workspace --all-targets
 cd crates/web && trunk serve                 # http://127.0.0.1:8080
 ```
 
+The end-to-end tests in `e2e/` drive the release build of the site in Chromium
+with [Playwright](https://playwright.dev/python/). Run them from the repository
+root; traces of failed tests end up in `test-results/`:
+
+```sh
+python3 -m venv e2e/.venv
+e2e/.venv/bin/pip install -r e2e/requirements.txt
+e2e/.venv/bin/playwright install --with-deps chromium
+
+e2e/.venv/bin/pytest e2e                     # builds the site first
+E2E_SKIP_BUILD=1 e2e/.venv/bin/pytest e2e    # reuses crates/web/dist
+```
+
 ## Deploy
 
 Pull requests are checked by `.github/workflows/ci.yml` (rustfmt, clippy
-natively and for wasm32, tests). Every push to `main` builds the site in
+natively and for wasm32, tests) and the end-to-end tests, which do not hold back
+deployment. Every push to `main` builds the site in
 release mode and publishes it to GitHub Pages (`.github/workflows/pages.yml`;
 set *Settings → Pages → Source* to *GitHub Actions* once). To build by hand:
 
